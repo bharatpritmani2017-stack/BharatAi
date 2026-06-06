@@ -16,7 +16,9 @@ jobs:
           sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev libssl-dev
           pip3 install --user --upgrade buildozer
       - name: Build with Buildozer
-        run: buildozer android debug
+  run: |
+    yes | sdkmanager --licenses || true
+    buildozer android debug
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
