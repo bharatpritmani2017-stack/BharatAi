@@ -11,7 +11,7 @@ import pytz
 st.set_page_config(page_title="Bharat AI", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
 
 # --- API KEY ---
-genai.configure(api_key="AIzaSyAb8RN6L4N3FbZq_6yJNkrPaAxgXbKsLELNyvTR1ECRxT-Q7_-g")
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 CHAT_FILE = "chats.json"
 
