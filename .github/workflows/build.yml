@@ -17,7 +17,7 @@ jobs:
         env:
           USE_SDK_COMMANDER: 1
       - name: Upload artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: package
           path: bin/*.apk
