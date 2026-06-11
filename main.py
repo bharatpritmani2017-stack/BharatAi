@@ -8,7 +8,7 @@ st.set_page_config(page_title="Bharat AI", page_icon="⚡", layout="wide", initi
 
 from dotenv import load_dotenv
 load_dotenv()
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
+genai.configure(api_key=os.environ.get("AQ.Ab8RN6LPv_XMqXFb4DcrAaW2EpREHztJZkViFcJuglb8JEj-Og", ""))
 
 CHAT_FILE = "chats.json"
 
@@ -291,7 +291,7 @@ chat_list_html = ""
 for cid2, cd2 in sorted(st.session_state.chats.items(), key=lambda x: x[1]["created_at"], reverse=True):
     t2 = html_lib.escape(cd2.get("title","New Chat")[:28])
     act2 = "background:#1E1B4B;color:#A5B4FC;border-color:#4F46E5;" if cid2 == st.session_state.cid else ""
-    chat_list_html += f\"<div style='display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;margin-bottom:2px;border:1px solid transparent;color:#999;{act2}' onclick=\\"location.href=location.pathname+'?action=sw_{cid2}'\\"'>💬 {t2}</div>\"
+    chat_list_html += "<div style='display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;margin-bottom:2px;border:1px solid transparent;color:#999;" + act2 + "' onclick=\"location.href=location.pathname+\'?action=sw_" + cid2 + "\'\">💬 " + t2 + "</div>" 
 
 exp_links = ""
 if st.session_state.cid and st.session_state.cid in st.session_state.chats:
@@ -302,11 +302,11 @@ if st.session_state.cid and st.session_state.cid in st.session_state.chats:
             et2 += f"[{'You' if m2['role']=='user' else 'Bharat AI'}]\n{m2['content']}\n\n"
         b64t2 = base64.b64encode(et2.encode()).decode()
         ds2 = get_india_time().strftime('%d%m%Y')
-        exp_links += f\"<a href='data:text/plain;base64,{b64t2}' download='chat_{ds2}.txt' style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #2A2A2A;color:#fff;text-decoration:none;font-size:13px;margin-bottom:8px;'>📝 TXT Download</a>\"
+        exp_links += "<a href='data:text/plain;base64," + b64t2 + "' download='chat_" + ds2 + ".txt' style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #2A2A2A;color:#fff;text-decoration:none;font-size:13px;margin-bottom:8px;'>📝 TXT Download</a>" 
         try:
             pdf2 = create_pdf(et2, cc2.get("title","Bharat AI"))
             b64p2 = base64.b64encode(pdf2).decode()
-            exp_links += f\"<a href='data:application/pdf;base64,{b64p2}' download='chat_{ds2}.pdf' style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #2A2A2A;color:#fff;text-decoration:none;font-size:13px;margin-bottom:8px;'>📄 PDF Download</a>\"
+            exp_links += "<a href='data:application/pdf;base64," + b64p2 + "' download='chat_" + ds2 + ".pdf' style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #2A2A2A;color:#fff;text-decoration:none;font-size:13px;margin-bottom:8px;'>📄 PDF Download</a>" 
         except: pass
 
 mode_lbl2 = "☀️ Light Mode" if dm else "🌙 Dark Mode"
