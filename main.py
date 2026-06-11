@@ -1,24 +1,19 @@
-
 import streamlit as st
 import google.generativeai as genai
 from datetime import datetime
-import uuid
-import json
-import os
-import base64
-import pytz
+import uuid, json, os, base64, pytz, io, textwrap, re
+import html as html_lib
 
 st.set_page_config(page_title="Bharat AI", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
 
-# --- API KEY ---
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+from dotenv import load_dotenv
+load_dotenv()
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
 
 CHAT_FILE = "chats.json"
 
-# --- INDIAN TIME ---
 def get_india_time():
-    ist = pytz.timezone("Asia/Kolkata")
-    return datetime.now(ist)
+    return datetime.now(pytz.timezone("Asia/Kolkata"))
 
 def load_chats():
     if os.path.exists(CHAT_FILE):
@@ -28,343 +23,477 @@ def load_chats():
             for chat in chats.values():
                 chat["created_at"] = datetime.fromisoformat(chat["created_at"])
             return chats
-        except:
-            return {}
+        except: return {}
     return {}
 
 def save_chats():
     chats_to_save = {}
-    for chat_id, chat_data in st.session_state.chats.items():
-        chats_to_save[chat_id] = {
-            "title": chat_data["title"],
-            "messages": [
-                {k: v for k, v in msg.items() if k != "image_data"} 
-                for msg in chat_data["messages"]
-            ],
-            "created_at": chat_data["created_at"].isoformat()
+    for cid, cd in st.session_state.chats.items():
+        chats_to_save[cid] = {
+            "title": cd["title"],
+            "messages": [{k:v for k,v in m.items() if k != "image_data"} for m in cd["messages"]],
+            "created_at": cd["created_at"].isoformat()
         }
     with open(CHAT_FILE, "w", encoding="utf-8") as f:
         json.dump(chats_to_save, f, ensure_ascii=False, indent=2)
 
-SYSTEM_PROMPT = f"You are Bharat AI. Reply in user's language. Hindi→Hindi, Hinglish→Hinglish, English→English. Be direct and helpful. Current date and time in India: {get_india_time().strftime('%d %B %Y, %I:%M %p IST')}"
-model = genai.GenerativeModel(model_name="gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
+def needs_export(text):
+    t = text.lower().strip()
+    return any(k in t for k in ["pdf bana","pdf bnao","pdf banao","pdf de","pdf chahiye","pdf bna","pdf dedo","txt bana","txt bnao","txt de","text file"])
 
-# --- CSS ---
-st.markdown("""
+def create_pdf(text, title="Bharat AI"):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as rc
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.colors import HexColor
+    for p in ["C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
+        if os.path.exists(p):
+            fp = p; break
+    else: fp = None
+    buf = io.BytesIO()
+    c = rc.Canvas(buf, pagesize=A4)
+    w, h = A4
+    fn = 'Helvetica'
+    try:
+        if fp: pdfmetrics.registerFont(TTFont('HF', fp)); fn = 'HF'
+    except: pass
+    c.setFont(fn,16); c.setFillColor(HexColor('#4F46E5'))
+    c.drawCentredString(w/2, h-55, title[:60])
+    c.setFont(fn,9); c.setFillColor(HexColor('#787878'))
+    c.drawCentredString(w/2, h-75, f"Bharat AI | {get_india_time().strftime('%d %B %Y, %I:%M %p IST')}")
+    c.setStrokeColor(HexColor('#4F46E5')); c.line(40,h-85,w-40,h-85)
+    c.setFillColor(HexColor('#1E1E1E')); c.setFont(fn,11); y=h-110
+    for line in text.split('\n'):
+        if not line.strip(): y-=8
+        else:
+            cl = line.replace('**','').replace('*','').replace('#','').strip()
+            for wl in textwrap.wrap(cl,85):
+                if y<50: c.showPage(); c.setFont(fn,11); c.setFillColor(HexColor('#1E1E1E')); y=h-50
+                c.drawString(40,y,wl); y-=18
+    c.save(); return buf.getvalue()
+
+def dl_link(data, filename, label, mime):
+    b64 = base64.b64encode(data).decode()
+    return f'<a href="data:{mime};base64,{b64}" download="{filename}" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#FFF;text-decoration:none;padding:10px 20px;border-radius:10px;font-size:13px;font-weight:600;margin:4px 2px;">{label}</a>'
+
+def fmt_msg(content):
+    def rep_code(m):
+        lang = m.group(1) or "code"
+        code = html_lib.escape(m.group(2).strip())
+        cid = abs(hash(code[:20])) % 99999
+        return f"<div class='cb'><div class='ch'><span class='cl'>{lang}</span><button class='cpb' onclick='var el=document.getElementById(\"c{cid}\");var t=document.createElement(\"textarea\");t.value=el.innerText;document.body.appendChild(t);t.select();document.execCommand(\"copy\");document.body.removeChild(t);this.innerHTML=\"✅\";setTimeout(()=>this.innerHTML=\"📋 Copy\",1500)'>📋 Copy</button></div><pre><code id='c{cid}'>{code}</code></pre></div>"
+    content = re.sub(r'```(\w*)\n?([\s\S]*?)```', rep_code, content)
+    content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
+    return content.replace('\n','<br>')
+
+def get_model():
+    return genai.GenerativeModel(
+        model_name="gemini-2.5-flash",
+        system_instruction=f"""Tu Bharat AI hai — India ka smart AI assistant. Banaya hai Bharat Pritmani ne, Jaipur, Rajasthan se.
+Naam pooche → "Main Bharat AI hoon! 😊"
+Kisne banaya → "Bharat Pritmani ne, Jaipur se!"
+Style: Dost jaisa, seedha jawab, Hindi/English jo likhe.
+EXPORT pe sirf bol: "✅ Neeche download button aa gaya!"
+Time: {get_india_time().strftime('%d %B %Y, %I:%M %p IST')}"""
+    )
+
+# ── SESSION STATE ──────────────────────────────────────────────────────────────
+if "chats" not in st.session_state: st.session_state.chats = load_chats()
+if "cid" not in st.session_state: st.session_state.cid = None
+if "uploaded_image" not in st.session_state: st.session_state.uploaded_image = None
+if "dark_mode" not in st.session_state: st.session_state.dark_mode = True
+if "msg_count" not in st.session_state:
+    st.session_state.msg_count = 0
+    st.session_state.msg_date = get_india_time().strftime("%Y-%m-%d")
+
+today = get_india_time().strftime("%Y-%m-%d")
+if st.session_state.msg_date != today:
+    st.session_state.msg_count = 0
+    st.session_state.msg_date = today
+
+dm = st.session_state.dark_mode
+
+# ── SIDEBAR (3-dot panel replacement — 100% working) ──────────────────────────
+with st.sidebar:
+    st.markdown(f"""
+    <div style='text-align:center;padding:16px 0 8px;'>
+        <div style='width:48px;height:48px;background:linear-gradient(135deg,#4338CA,#7C3AED);
+            border-radius:14px;display:inline-flex;align-items:center;justify-content:center;font-size:24px;'>⚡</div>
+        <div style='font-size:16px;font-weight:700;margin-top:8px;'>Bharat AI ✨</div>
+        <div style='font-size:11px;color:#888;'>Aapka AI Saathi</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.divider()
+
+    # New Chat
+    if st.button("＋ New Chat", use_container_width=True, type="primary"):
+        nid = str(uuid.uuid4())
+        st.session_state.chats[nid] = {"title":"New Chat","messages":[],"created_at":get_india_time()}
+        st.session_state.cid = nid
+        st.session_state.uploaded_image = None
+        save_chats(); st.rerun()
+
+    # Dark/Light mode
+    mode_lbl = "☀️ Light Mode" if dm else "🌙 Dark Mode"
+    if st.button(mode_lbl, use_container_width=True):
+        st.session_state.dark_mode = not st.session_state.dark_mode; st.rerun()
+
+    st.divider()
+
+    # Current chat controls
+    if st.session_state.cid and st.session_state.cid in st.session_state.chats:
+        st.caption("CURRENT CHAT")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🗑️ Clear", use_container_width=True):
+                st.session_state.chats[st.session_state.cid]["messages"] = []
+                st.session_state.chats[st.session_state.cid]["title"] = "New Chat"
+                save_chats(); st.rerun()
+        with col2:
+            if st.button("🔴 Delete", use_container_width=True):
+                del st.session_state.chats[st.session_state.cid]
+                st.session_state.cid = None
+                save_chats(); st.rerun()
+
+        # Export
+        cc_exp = st.session_state.chats.get(st.session_state.cid, {})
+        if cc_exp.get("messages"):
+            st.divider()
+            st.caption("EXPORT CHAT")
+            et = f"Bharat AI Chat\n{get_india_time().strftime('%d %B %Y, %I:%M %p IST')}\n{'='*40}\n\n"
+            for m in cc_exp["messages"]:
+                et += f"[{'You' if m['role']=='user' else 'Bharat AI'}] {m.get('timestamp','')}\n{m['content']}\n\n"
+            ds = get_india_time().strftime('%d%m%Y')
+            st.download_button("📝 TXT Download", data=et.encode(), file_name=f"chat_{ds}.txt", mime="text/plain", use_container_width=True)
+            try:
+                pdf = create_pdf(et, cc_exp.get("title","Bharat AI"))
+                st.download_button("📄 PDF Download", data=pdf, file_name=f"chat_{ds}.pdf", mime="application/pdf", use_container_width=True)
+            except: pass
+
+    st.divider()
+
+    # Stats
+    st.caption(f"💬 Aaj ke messages: {st.session_state.msg_count}/1500")
+
+    st.divider()
+
+    # Recent chats
+    st.caption("RECENT CHATS")
+    search = st.text_input("🔍", placeholder="Search...", label_visibility="collapsed")
+    for cid, cd in sorted(st.session_state.chats.items(), key=lambda x: x[1]["created_at"], reverse=True):
+        t = cd.get("title","New Chat")[:25]
+        if search.lower() in t.lower():
+            is_active = cid == st.session_state.cid
+            btn_type = "primary" if is_active else "secondary"
+            if st.button(f"💬 {t}", key=f"chat_{cid}", use_container_width=True, type=btn_type):
+                st.session_state.cid = cid; st.rerun()
+
+    st.divider()
+    st.markdown("""<div style='text-align:center;font-size:11px;color:#555;line-height:1.8;'>
+        🤖 Bharat AI<br>by Bharat Pritmani<br>Jaipur 🇮🇳</div>""", unsafe_allow_html=True)
+
+# ── COLORS ────────────────────────────────────────────────────────────────────
+BG    = "#0F0F0F" if dm else "#F0F2F5"
+MSGBG = "#1A1A1A" if dm else "#FFFFFF"
+MSGBD = "#2A2A2A" if dm else "#E5E7EB"
+MSGC  = "#E5E5E5" if dm else "#111111"
+HDRBG = "#0F0F0F" if dm else "#FFFFFF"
+INBG  = "#1A1A1A" if dm else "#FFFFFF"
+INC   = "#FFFFFF" if dm else "#111111"
+BOTBG = "#0F0F0F" if dm else "#F0F2F5"
+TC    = "#FFFFFF" if dm else "#111111"
+SC    = "#888888" if dm else "#555555"
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
+st.markdown(f"""
 <style>
-.stApp { background-color: #000000; }
-[data-testid="stSidebar"] {
-    background-color: #0A0A0A!important;
-    border-right: 1px solid #262626;
-    min-width: 320px!important;
-    max-width: 320px!important;
-}
-[data-testid="collapsedControl"] {display: none!important;}
-#MainMenu, footer {visibility: hidden;}
-.stButton > button {
-    width: 100%;
-    background: linear-gradient(90deg, #4F46E5 0%, #7C3AED 100%);
-    color: white!important;
-    border: none;
-    border-radius: 10px;
-    padding: 0.6rem;
-    font-weight: 600;
-}
-.stMarkdown,.stMarkdown p {color: #FFFFFF!important;}
-h1 {color: #FFFFFF!important;}
-.stChatInput textarea {
-    background-color: #1A1A1A!important;
-    color: #FFFFFF!important;
-    border: 1px solid #262626!important;
-    border-radius: 24px!important;
-}
-.export-btn > button {
-    background: linear-gradient(90deg, #059669 0%, #047857 100%)!important;
-}
-.stDownloadButton > button {
-    width: 100%;
-    background: linear-gradient(90deg, #059669 0%, #047857 100%);
-    color: white!important;
-    border: none;
-    border-radius: 10px;
-    padding: 0.6rem;
-    font-weight: 600;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+*{{font-family:'Inter',sans-serif;box-sizing:border-box;}}
+.stApp{{background:{BG}!important;}}
+#MainMenu,footer{{visibility:hidden;}}
+header{{visibility:hidden;}}
+.stDeployButton{{display:none!important;}}
+
+    border:1px solid {'#333' if dm else '#E5E7EB'};
+    border-radius:50%;
+    align-items:center;justify-content:center;
+}}
+::-webkit-scrollbar{{width:3px;}}
+[data-testid="collapsedControl"]{{display:none!important;}}
+/* Custom Panel */
+.panel-overlay{{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:998;display:none;}}
+.panel-overlay.open{{display:block;}}
+.side-panel{{position:fixed;top:0;right:0;width:82vw;max-width:310px;height:100vh;background:{'#141414' if dm else '#fff'};z-index:999;transform:translateX(100%);transition:transform 0.28s ease;overflow-y:auto;box-shadow:-4px 0 20px rgba(0,0,0,0.4);}}
+.side-panel.open{{transform:translateX(0);}}
+
+
+}}
+
+/* Style real Streamlit sidebar toggle as 3-dot button */
+
+
+
+
+::-webkit-scrollbar-thumb{{background:#333;border-radius:4px;}}
+.hdr{{display:flex;align-items:center;padding:10px 14px;
+    border-bottom:1px solid {'#1E1E1E' if dm else '#E5E7EB'};
+    background:{HDRBG};position:sticky;top:0;z-index:200;}}
+.h-av{{width:38px;height:38px;background:linear-gradient(135deg,#4338CA,#7C3AED);
+    border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;margin-right:10px;}}
+.h-name{{font-size:16px;font-weight:700;color:{TC};}}
+.h-dot{{display:flex;align-items:center;gap:5px;font-size:11px;color:#22C55E;margin-top:2px;}}
+.h-dot::before{{content:'';width:6px;height:6px;background:#22C55E;border-radius:50%;display:inline-block;}}
+.h-menu{{width:38px;height:38px;background:{'#1A1A1A' if dm else '#F3F4F6'};border:1px solid {'#333' if dm else '#E5E7EB'};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;color:{TC};cursor:pointer;user-select:none;flex-shrink:0;}}
+.wel{{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:50px 20px;text-align:center;}}
+.wl{{width:80px;height:80px;background:linear-gradient(135deg,#4338CA,#7C3AED);border-radius:24px;
+    display:flex;align-items:center;justify-content:center;font-size:42px;margin-bottom:16px;
+    box-shadow:0 8px 30px rgba(99,102,241,0.4);}}
+.wn{{font-size:26px;font-weight:800;margin-bottom:10px;
+    background:linear-gradient(135deg,#4F46E5,#7C3AED,#EC4899);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;}}
+.uw{{display:flex;justify-content:flex-end;padding:5px 0;}}
+.um{{background:linear-gradient(135deg,#4F46E5,#7C3AED);color:white;padding:12px 16px;
+    border-radius:18px 18px 4px 18px;max-width:78%;font-size:14px;line-height:1.6;
+    box-shadow:0 4px 12px rgba(99,102,241,0.3);}}
+.ut{{font-size:11px;color:rgba(255,255,255,0.6);margin-top:4px;text-align:right;}}
+.aw{{display:flex;gap:10px;align-items:flex-start;padding:5px 0;}}
+.aa{{width:34px;height:34px;background:linear-gradient(135deg,#4338CA,#7C3AED);border-radius:50%;
+    display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;margin-top:2px;}}
+.ac{{flex:1;max-width:86%;}}
+.am{{background:{MSGBG};border:1px solid {MSGBD};color:{MSGC};padding:12px 16px;
+    border-radius:4px 18px 18px 18px;font-size:14px;line-height:1.7;}}
+.at{{font-size:11px;color:#555;margin-top:4px;}}
+.cb{{background:#0D1117;border:1px solid #30363D;border-radius:8px;margin:10px 0;overflow:hidden;}}
+.ch{{background:#161B22;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #30363D;}}
+.cl{{font-size:12px;color:#8B949E;font-family:monospace;}}
+.cb pre{{margin:0;padding:14px;overflow-x:auto;font-size:13px;line-height:1.6;color:#E6EDF3;font-family:'Courier New',monospace;}}
+.cpb{{background:#1A1A1A;border:1px solid #2A2A2A;color:#888;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;}}
+section[data-testid="stBottom"]{{background:{BOTBG}!important;}}
+section[data-testid="stBottom"] > div{{background:{BOTBG}!important;}}
+[data-testid="stChatInputContainer"]{{background:{BOTBG}!important;border-top:1px solid {'#1E1E1E' if dm else '#E5E7EB'}!important;}}
+.stChatInput textarea{{background:{INBG}!important;color:{INC}!important;border:1px solid {'#2A2A2A' if dm else '#D1D5DB'}!important;border-radius:14px!important;font-size:14px!important;}}
+.stChatInput textarea:focus{{border-color:#4F46E5!important;}}
+[data-testid="stChatInputSubmitButton"]{{background:linear-gradient(135deg,#4F46E5,#7C3AED)!important;border-radius:10px!important;}}
+.td{{display:flex;gap:4px;align-items:center;padding:8px 0;}}
+.td div{{width:8px;height:8px;background:#4F46E5;border-radius:50%;animation:td 1.2s infinite;}}
+.td div:nth-child(2){{animation-delay:0.2s;}}
+.td div:nth-child(3){{animation-delay:0.4s;}}
+@keyframes td{{0%,60%,100%{{opacity:0.2;transform:scale(0.8);}}30%{{opacity:1;transform:scale(1);}}}}
+div[data-testid="stFileUploader"] label{{display:none!important;}}
+.stMarkdown p{{color:{MSGC}!important;}}
+.block-container{{padding-top:0!important;max-width:100%!important;padding-left:0.8rem!important;padding-right:0.8rem!important;}}
 </style>
 """, unsafe_allow_html=True)
 
-# --- SESSION STATE ---
-if "chats" not in st.session_state:
-    st.session_state.chats = load_chats()
+# ── CHAT LIST & EXPORT FOR PANEL ──────────────────────────────────────────────
+chat_list_html = ""
+for cid2, cd2 in sorted(st.session_state.chats.items(), key=lambda x: x[1]["created_at"], reverse=True):
+    t2 = html_lib.escape(cd2.get("title","New Chat")[:28])
+    act2 = "background:#1E1B4B;color:#A5B4FC;border-color:#4F46E5;" if cid2 == st.session_state.cid else ""
+    chat_list_html += f\"<div style='display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;margin-bottom:2px;border:1px solid transparent;color:#999;{act2}' onclick=\\"location.href=location.pathname+'?action=sw_{cid2}'\\"'>💬 {t2}</div>\"
 
-if "current_chat_id" not in st.session_state:
-    if st.session_state.chats:
-        st.session_state.current_chat_id = sorted(
-            st.session_state.chats.items(),
-            key=lambda x: x[1]["created_at"], reverse=True
-        )[0][0]
-    else:
-        new_id = str(uuid.uuid4())
-        st.session_state.current_chat_id = new_id
-        st.session_state.chats[new_id] = {
-            "title": "New Chat",
-            "messages": [],
-            "created_at": get_india_time()
-        }
-        save_chats()
+exp_links = ""
+if st.session_state.cid and st.session_state.cid in st.session_state.chats:
+    cc2 = st.session_state.chats[st.session_state.cid]
+    if cc2.get("messages"):
+        et2 = f"Bharat AI Chat\n{get_india_time().strftime('%d %B %Y')}\n\n"
+        for m2 in cc2["messages"]:
+            et2 += f"[{'You' if m2['role']=='user' else 'Bharat AI'}]\n{m2['content']}\n\n"
+        b64t2 = base64.b64encode(et2.encode()).decode()
+        ds2 = get_india_time().strftime('%d%m%Y')
+        exp_links += f\"<a href='data:text/plain;base64,{b64t2}' download='chat_{ds2}.txt' style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #2A2A2A;color:#fff;text-decoration:none;font-size:13px;margin-bottom:8px;'>📝 TXT Download</a>\"
+        try:
+            pdf2 = create_pdf(et2, cc2.get("title","Bharat AI"))
+            b64p2 = base64.b64encode(pdf2).decode()
+            exp_links += f\"<a href='data:application/pdf;base64,{b64p2}' download='chat_{ds2}.pdf' style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #2A2A2A;color:#fff;text-decoration:none;font-size:13px;margin-bottom:8px;'>📄 PDF Download</a>\"
+        except: pass
 
-if "chat_session" not in st.session_state:
-    history = []
-    for msg in st.session_state.chats[st.session_state.current_chat_id]["messages"]:
-        role = "user" if msg["role"] == "user" else "model"
-        history.append({"role": role, "parts": [msg["content"]]})
-    st.session_state.chat_session = model.start_chat(history=history)
+mode_lbl2 = "☀️ Light Mode" if dm else "🌙 Dark Mode"
+SC2 = "#888" if dm else "#555"
+PBG2 = "#141414" if dm else "#fff"
+TC2 = "#fff" if dm else "#111"
+PBD2 = "#2A2A2A" if dm else "#E5E7EB"
 
-if "uploaded_image" not in st.session_state:
-    st.session_state.uploaded_image = None
+# ── HEADER ─────────────────────────────────────────────────────────────────────
+st.markdown(f"""
+<div class='panel-overlay' id='pov' onclick='closePanel()'></div>
 
-# --- FUNCTIONS ---
-def new_chat():
-    new_id = str(uuid.uuid4())
-    st.session_state.current_chat_id = new_id
-    st.session_state.chats[new_id] = {
-        "title": "New Chat",
-        "messages": [],
-        "created_at": get_india_time()
-    }
-    st.session_state.chat_session = model.start_chat(history=[])
-    st.session_state.uploaded_image = None
-    save_chats()
-    st.rerun()
-
-def switch_chat(chat_id):
-    st.session_state.current_chat_id = chat_id
-    history = []
-    for msg in st.session_state.chats[chat_id]["messages"]:
-        role = "user" if msg["role"] == "user" else "model"
-        history.append({"role": role, "parts": [msg["content"]]})
-    st.session_state.chat_session = model.start_chat(history=history)
-    st.session_state.uploaded_image = None
-    st.rerun()
-
-def delete_chat(chat_id):
-    del st.session_state.chats[chat_id]
-    if st.session_state.current_chat_id == chat_id:
-        if st.session_state.chats:
-            st.session_state.current_chat_id = list(st.session_state.chats.keys())[0]
-        else:
-            new_chat()
-            return
-    save_chats()
-    st.rerun()
-
-def export_chat_txt(chat_data):
-    """Chat ko plain text mein export karo"""
-    lines = []
-    lines.append(f"=== {chat_data['title']} ===")
-    lines.append(f"Export Date: {get_india_time().strftime('%d %B %Y, %I:%M %p IST')}")
-    lines.append("=" * 40)
-    lines.append("")
-    for msg in chat_data["messages"]:
-        role = "Aap" if msg["role"] == "user" else "Bharat AI"
-        timestamp = msg.get("timestamp", "")
-        if timestamp:
-            lines.append(f"[{timestamp}] {role}:")
-        else:
-            lines.append(f"{role}:")
-        lines.append(msg["content"])
-        lines.append("")
-    return "\n".join(lines)
-
-def export_chat_json(chat_data):
-    """Chat ko JSON mein export karo"""
-    export_data = {
-        "title": chat_data["title"],
-        "exported_at": get_india_time().strftime("%d %B %Y, %I:%M %p IST"),
-        "messages": [
-            {
-                "role": msg["role"],
-                "content": msg["content"],
-                "timestamp": msg.get("timestamp", "")
-            }
-            for msg in chat_data["messages"]
-        ]
-    }
-    return json.dumps(export_data, ensure_ascii=False, indent=2)
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.markdown("## ⚡ Bharat AI")
-    
-    # Indian time show karo
-    ist_time = get_india_time()
-    st.markdown(
-        f"<p style='color: #A3A3A3; font-size: 0.75rem; margin: 0 0 1rem 0;'>🕐 {ist_time.strftime('%d %b %Y, %I:%M %p')} IST</p>",
-        unsafe_allow_html=True
-    )
-    
-    if st.button("➕ New Chat", use_container_width=True, key="new"):
-        new_chat()
-
-    # --- IMAGE UPLOAD ---
-    st.markdown("<p style='color: #A3A3A3; font-size: 0.8rem; font-weight: 600; margin: 1rem 0 0.5rem 0;'>📷 IMAGE UPLOAD</p>", unsafe_allow_html=True)
-    uploaded_file = st.file_uploader(
-        "JPG/PNG upload karo",
-        type=["jpg", "jpeg", "png"],
-        key="img_uploader",
-        label_visibility="collapsed"
-    )
-    if uploaded_file is not None:
-        st.session_state.uploaded_image = uploaded_file
-        st.image(uploaded_file, caption="Image ready ✅", use_column_width=True)
-        if st.button("❌ Image Hatao", key="clear_img"):
-            st.session_state.uploaded_image = None
-            st.rerun()
-
-    st.markdown("<p style='color: #A3A3A3; font-size: 0.8rem; font-weight: 600; margin: 1rem 0 0.5rem 0;'>RECENT CHATS</p>", unsafe_allow_html=True)
-    
-    sorted_chats = sorted(st.session_state.chats.items(), key=lambda x: x[1]["created_at"], reverse=True)
-    for chat_id, chat_data in sorted_chats:
-        title = chat_data.get("title", "New Chat")[:25]
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            if chat_id == st.session_state.current_chat_id:
-                st.button(f"💬 {title}", key=f"c_{chat_id}", type="primary", use_container_width=True, disabled=True)
-            else:
-                if st.button(f"💬 {title}", key=f"c_{chat_id}", use_container_width=True):
-                    switch_chat(chat_id)
-        with col2:
-            if st.button("🗑️", key=f"d_{chat_id}"):
-                delete_chat(chat_id)
-
-# --- MAIN AREA ---
-current_chat = st.session_state.chats[st.session_state.current_chat_id]
-
-if len(current_chat["messages"]) == 0:
-    st.markdown("<div style='text-align: center; margin-top: 20vh;'>", unsafe_allow_html=True)
-    st.title("⚡ Bharat AI")
-    st.caption("Namaste! Main Bharat AI hoon. Kya puchna hai?")
-    st.markdown("</div>", unsafe_allow_html=True)
-else:
-    # --- EXPORT BUTTONS (messages hone par dikhao) ---
-    col_exp1, col_exp2, col_spacer = st.columns([1, 1, 4])
-    with col_exp1:
-        txt_content = export_chat_txt(current_chat)
-        st.download_button(
-            label="📄 Export TXT",
-            data=txt_content,
-            file_name=f"{current_chat['title'][:20]}_chat.txt",
-            mime="text/plain",
-            key="export_txt"
-        )
-    with col_exp2:
-        json_content = export_chat_json(current_chat)
-        st.download_button(
-            label="📦 Export JSON",
-            data=json_content,
-            file_name=f"{current_chat['title'][:20]}_chat.json",
-            mime="application/json",
-            key="export_json"
-        )
-    st.markdown("<div style='padding-top: 1rem;'></div>", unsafe_allow_html=True)
-
-# --- SHOW MESSAGES ---
-for msg in current_chat["messages"]:
-    timestamp = msg.get("timestamp", "")
-    ts_html = f"<div style='color: #666; font-size: 11px; margin-top: 4px;'>{timestamp}</div>" if timestamp else ""
-    
-    if msg["role"] == "user":
-        img_html = ""
-        if msg.get("has_image"):
-            img_html = "<div style='color: #A3A3A3; font-size: 12px; margin-bottom: 4px;'>📷 Image attached</div>"
-        st.markdown(f"""
-        <div style='display: flex; justify-content: flex-end; margin-bottom: 16px;'>
-            <div style='background-color: #1A1A1A; padding: 12px 16px; border-radius: 18px; max-width: 70%; border: 1px solid #262626;'>
-                {img_html}
-                <div style='color: #FFFFFF; line-height: 1.6; font-size: 15px;'>{msg["content"]}</div>
-                {ts_html}
+<div class='side-panel' id='spnl'>
+    <div style='display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid {PBD2};position:sticky;top:0;background:{PBG2};z-index:10;'>
+        <div style='display:flex;align-items:center;gap:10px;'>
+            <div style='width:36px;height:36px;background:linear-gradient(135deg,#4338CA,#7C3AED);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;'>⚡</div>
+            <div>
+                <div style='font-size:15px;font-weight:700;color:{TC2};'>Bharat AI ✨</div>
+                <div style='font-size:11px;color:{SC2};'>Aapka AI Saathi</div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div style='display: flex; gap: 12px; margin-bottom: 24px; align-items: flex-start;'>
-            <div style='width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); flex-shrink: 0; margin-top: 2px;'></div>
-            <div style='max-width: 85%; padding-top: 4px;'>
-                <div style='color: #FFFFFF; line-height: 1.7; font-size: 15px;'>{msg["content"]}</div>
-                {ts_html}
-            </div>
+        <div onclick='closePanel()' style='width:28px;height:28px;background:#2A2A2A;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;color:{TC2};'>✕</div>
+    </div>
+
+    <div style='padding:10px 14px;'>
+        <div onclick="location.href=location.pathname+'?action=new_chat'" style='display:flex;align-items:center;justify-content:center;padding:11px;border-radius:10px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;cursor:pointer;font-size:14px;font-weight:700;margin-bottom:8px;'>＋ New Chat</div>
+        <div style='background:#1A1A1A;border:1px solid {PBD2};border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>
+            <div><div style='font-size:11px;color:{SC2};'>Aaj ke messages</div><div style='font-size:16px;font-weight:700;color:#A5B4FC;'>{st.session_state.msg_count}/1500</div></div>
+            <div style='font-size:24px;'>💬</div>
         </div>
-        """, unsafe_allow_html=True)
+        <div onclick="location.href=location.pathname+'?action=toggle_mode'" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid {PBD2};color:{TC2};cursor:pointer;font-size:13px;margin-bottom:8px;'>{mode_lbl2}</div>
+        <div onclick="location.href=location.pathname+'?action=clear_chat'" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid {PBD2};color:{TC2};cursor:pointer;font-size:13px;margin-bottom:8px;'>🗑️ Clear Chat</div>
+        <div onclick="location.href=location.pathname+'?action=delete_chat'" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #3A1A1A;color:#EF4444;cursor:pointer;font-size:13px;margin-bottom:8px;'>🔴 Delete Chat</div>
+    </div>
 
-# --- CHAT INPUT ---
-if prompt := st.chat_input("Message likho... (image upload sidebar se karo)"):
-    if current_chat["title"] == "New Chat" and len(current_chat["messages"]) == 0:
-        current_chat["title"] = prompt[:30] + "..." if len(prompt) > 30 else prompt
+    <div style='padding:0 14px;'>
+        <div style='font-size:10px;font-weight:700;color:{SC2};text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'>Export</div>
+        {exp_links if exp_links else f"<div style='font-size:12px;color:#555;'>Pehle chat karo</div>"}
+    </div>
 
-    now_str = get_india_time().strftime("%I:%M %p")
-    has_image = st.session_state.uploaded_image is not None
+    <hr style='border:none;border-top:1px solid {PBD2};margin:8px 0;'>
 
-    # User message store karo
-    current_chat["messages"].append({
-        "role": "user",
-        "content": prompt,
-        "timestamp": now_str,
-        "has_image": has_image
-    })
+    <div style='padding:0 14px;'>
+        <div style='font-size:10px;font-weight:700;color:{SC2};text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'>Recent Chats</div>
+        <input type='text' placeholder='🔍 Search...' oninput='filterC(this.value)' style='width:100%;padding:8px 10px;background:#1A1A1A;border:1px solid {PBD2};border-radius:8px;color:{TC2};font-size:12px;margin-bottom:8px;outline:none;box-sizing:border-box;'>
+        <div id='clist'>{chat_list_html}</div>
+    </div>
 
-    # User message dikhao
-    img_html = "<div style='color: #A3A3A3; font-size: 12px; margin-bottom: 4px;'>📷 Image attached</div>" if has_image else ""
-    st.markdown(f"""
-    <div style='display: flex; justify-content: flex-end; margin-bottom: 16px;'>
-        <div style='background-color: #1A1A1A; padding: 12px 16px; border-radius: 18px; max-width: 70%; border: 1px solid #262626;'>
-            {img_html}
-            <div style='color: #FFFFFF; line-height: 1.6; font-size: 15px;'>{prompt}</div>
-            <div style='color: #666; font-size: 11px; margin-top: 4px;'>{now_str}</div>
+    <div style='background:#1A1A1A;border:1px solid {PBD2};border-radius:12px;padding:14px;text-align:center;margin:12px 14px;'>
+        <div style='font-size:22px;margin-bottom:6px;'>🤖</div>
+        <div style='font-size:13px;font-weight:700;color:#A5B4FC;'>Bharat AI</div>
+        <div style='font-size:11px;color:{SC2};line-height:1.8;'>by Bharat Pritmani<br>Jaipur 🇮🇳<br><span style='color:#4F46E5;'>Gemini 2.5 Flash</span></div>
+    </div>
+</div>
+
+<div class='hdr'>
+    <div style='display:flex;align-items:center;gap:10px;'>
+        <div class='h-av'>⚡</div>
+        <div>
+            <div class='h-name'>Bharat AI ✨</div>
+            <div class='h-dot'>Online</div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    <button onclick='openPanel()' style='width:38px;height:38px;background:#1A1A1A;border:1px solid #333;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;color:#fff;cursor:pointer;flex-shrink:0;'>⋮</button>
+</div>
 
-    # AI response
-    try:
-        with st.spinner(""):
-            if has_image:
-                # Image ke saath message bhejo
-                img_file = st.session_state.uploaded_image
-                img_bytes = img_file.getvalue()
-                mime_type = "image/jpeg" if img_file.name.lower().endswith((".jpg", ".jpeg")) else "image/png"
-                
-                image_part = {
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": base64.b64encode(img_bytes).decode("utf-8")
-                    }
-                }
-                response = st.session_state.chat_session.send_message([image_part, prompt])
-                st.session_state.uploaded_image = None  # Image use hone ke baad clear karo
-            else:
-                response = st.session_state.chat_session.send_message(prompt)
-            
-            ai_reply = response.text
+<script>
+function openPanel(){{
+    document.getElementById('spnl').classList.add('open');
+    document.getElementById('pov').classList.add('open');
+}}
+function closePanel(){{
+    document.getElementById('spnl').classList.remove('open');
+    document.getElementById('pov').classList.remove('open');
+}}
+function filterC(q){{
+    document.querySelectorAll('#clist > div').forEach(function(el){{
+        el.style.display = el.textContent.toLowerCase().includes(q.toLowerCase()) ? 'flex' : 'none';
+    }});
+}}
+</script>
+""", unsafe_allow_html=True)
 
-        ai_time = get_india_time().strftime("%I:%M %p")
-        st.markdown(f"""
-        <div style='display: flex; gap: 12px; margin-bottom: 24px; align-items: flex-start;'>
-            <div style='width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); flex-shrink: 0; margin-top: 2px;'></div>
-            <div style='max-width: 85%; padding-top: 4px;'>
-                <div style='color: #FFFFFF; line-height: 1.7; font-size: 15px;'>{ai_reply}</div>
-                <div style='color: #666; font-size: 11px; margin-top: 4px;'>{ai_time}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+# ── IMAGE UPLOAD ───────────────────────────────────────────────────────────────
+if st.session_state.uploaded_image is None:
+    with st.expander("📷 Image Upload karo", expanded=False):
+        upl = st.file_uploader("img", type=["jpg","jpeg","png"], key="img_upload", label_visibility="collapsed")
+        if upl: st.session_state.uploaded_image = upl; st.rerun()
+else:
+    c1,c2,c3 = st.columns([1,3,1])
+    with c1: st.image(st.session_state.uploaded_image.getvalue(), width=60)
+    with c2: st.caption(f"📎 {st.session_state.uploaded_image.name[:20]}")
+    with c3:
+        if st.button("❌", key="rm_img"): st.session_state.uploaded_image = None; st.rerun()
 
-        current_chat["messages"].append({
-            "role": "assistant",
-            "content": ai_reply,
-            "timestamp": ai_time
-        })
+# ── WELCOME SCREEN ─────────────────────────────────────────────────────────────
+if not st.session_state.cid or st.session_state.cid not in st.session_state.chats:
+    h_now = get_india_time().hour
+    if 5<=h_now<12:    ge,gt,gc="🌅","Good Morning,","#FF9A3C"
+    elif 12<=h_now<17: ge,gt,gc="☀️","Good Afternoon,","#FFD700"
+    elif 17<=h_now<21: ge,gt,gc="🌆","Good Evening,","#FF6B6B"
+    else:              ge,gt,gc="🌙","Good Night,","#A78BFA"
+    st.markdown(f"""
+    <div class='wel'>
+        <div class='wl'>{ge}</div>
+        <div style='font-size:20px;font-weight:700;color:{gc};margin-bottom:4px;'>{gt}</div>
+        <div class='wn'>Bharat! 🙏</div>
+        <div style='font-size:14px;font-weight:600;color:{"#FFF" if dm else "#111"};margin-bottom:6px;'>Main Bharat AI hoon ⚡</div>
+        <div style='font-size:13px;color:{SC};'>Kuch likho — chat shuru ho jaayegi!</div>
+    </div>""", unsafe_allow_html=True)
+
+# ── MESSAGES ───────────────────────────────────────────────────────────────────
+if st.session_state.cid and st.session_state.cid in st.session_state.chats:
+    cc = st.session_state.chats[st.session_state.cid]
+    for i, msg in enumerate(cc["messages"]):
+        ts = msg.get("timestamp","")
+        if msg["role"] == "user":
+            ib = "📷 " if msg.get("has_image") else ""
+            st.markdown(f"""<div class='uw'><div>
+                <div class='um'>{ib}{html_lib.escape(msg['content'])}</div>
+                <div class='ut'>{ts} <span style='color:#A5B4FC;'>✓✓</span></div>
+            </div></div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""<div class='aw'>
+                <div class='aa'>⚡</div>
+                <div class='ac'>
+                    <div class='am'>{fmt_msg(msg['content'])}</div>
+                    <div class='at'>{ts}</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+            if i > 0 and cc["messages"][i-1].get("export_requested"):
+                sk = ts.replace(":","").replace(" ","")
+                dls = ""
+                try:
+                    pdf = create_pdf(msg["content"], cc.get("title","Bharat AI"))
+                    dls += dl_link(pdf, f"bharat_{sk}.pdf", "📄 PDF Download", "application/pdf")
+                except: pass
+                try:
+                    dls += dl_link(msg["content"].encode(), f"bharat_{sk}.txt", "📝 TXT Download", "text/plain")
+                except: pass
+                if dls: st.markdown(f"<div style='padding:4px 0;'>{dls}</div>", unsafe_allow_html=True)
+
+# ── CHAT INPUT ─────────────────────────────────────────────────────────────────
+if st.session_state.uploaded_image:
+    st.info(f"📷 Image ready: **{st.session_state.uploaded_image.name}**")
+
+prompt = st.chat_input("Message Bharat AI...")
+if prompt:
+    # Agar koi chat nahi — naya banao
+    if not st.session_state.cid or st.session_state.cid not in st.session_state.chats:
+        nid = str(uuid.uuid4())
+        st.session_state.chats[nid] = {"title": prompt[:30], "messages":[], "created_at":get_india_time()}
+        st.session_state.cid = nid
         save_chats()
-        st.rerun()
 
+    cc = st.session_state.chats[st.session_state.cid]
+    if cc["title"]=="New Chat" and not cc["messages"]:
+        cc["title"] = prompt[:30]+("..." if len(prompt)>30 else "")
+
+    now_str = get_india_time().strftime("%I:%M %p")
+    has_img = st.session_state.uploaded_image is not None
+    cc["messages"].append({"role":"user","content":prompt,"timestamp":now_str,
+        "has_image":has_img,"export_requested":needs_export(prompt)})
+    st.session_state.msg_count += 1
+
+    try:
+        tp = st.empty()
+        tp.markdown("<div class='aw'><div class='aa'>⚡</div><div class='td'><div></div><div></div><div></div></div></div>", unsafe_allow_html=True)
+        hist = [{"role":"user" if m["role"]=="user" else "model","parts":[m["content"]]} for m in cc["messages"][:-1]]
+        fs = get_model().start_chat(history=hist)
+        if has_img:
+            imgf = st.session_state.uploaded_image
+            ib = imgf.getvalue()
+            mt = "image/jpeg" if imgf.name.lower().endswith((".jpg",".jpeg")) else "image/png"
+            response = fs.send_message([{"inline_data":{"mime_type":mt,"data":base64.b64encode(ib).decode()}}, prompt])
+            st.session_state.uploaded_image = None
+        else:
+            response = fs.send_message(prompt)
+        ar = ""
+        try:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part,'text') and part.text: ar += part.text
+            if not ar: ar = response.text
+        except:
+            try: ar = response.text
+            except: ar = "Kuch error aa gaya, dobara try karo! 😅"
+        cc["messages"].append({"role":"assistant","content":ar,"timestamp":get_india_time().strftime("%I:%M %p")})
+        save_chats(); tp.empty(); st.rerun()
     except Exception as e:
         st.error(f"Error: {e}")
