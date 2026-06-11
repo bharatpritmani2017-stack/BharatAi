@@ -8,7 +8,7 @@ st.set_page_config(page_title="Bharat AI", page_icon="⚡", layout="wide", initi
 
 from dotenv import load_dotenv
 load_dotenv()
-genai.configure(api_key=os.environ.get("AQ.Ab8RN6LPv_XMqXFb4DcrAaW2EpREHztJZkViFcJuglb8JEj-Og", ""))
+genai.configure(api_key=os.environ.get("AQ.Ab8RN6KB-SVUmAFAq6TAbienwxu0gV-w4yaZluVmx8bAEa5zvQ", ""))
 
 CHAT_FILE = "chats.json"
 
@@ -220,7 +220,7 @@ header{{visibility:hidden;}}
     align-items:center;justify-content:center;
 }}
 ::-webkit-scrollbar{{width:3px;}}
-[data-testid="collapsedControl"]{{display:none!important;}}
+
 /* Custom Panel */
 .panel-overlay{{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:998;display:none;}}
 .panel-overlay.open{{display:block;}}
@@ -332,14 +332,18 @@ st.markdown(f"""
     </div>
 
     <div style='padding:10px 14px;'>
-        <div onclick="location.href=location.pathname+'?action=new_chat'" style='display:flex;align-items:center;justify-content:center;padding:11px;border-radius:10px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;cursor:pointer;font-size:14px;font-weight:700;margin-bottom:8px;'>＋ New Chat</div>
+        <div style='display:flex;align-items:center;justify-content:center;padding:11px;border-radius:10px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;cursor:pointer;font-size:14px;font-weight:700;margin-bottom:8px;'>
+<form method='get' action='' style='margin:0;width:100%;text-align:center;'>
+<input type='hidden' name='action' value='new_chat'>
+<button type='submit' style='background:none;border:none;color:#fff;font-size:14px;font-weight:700;cursor:pointer;width:100%;'>＋ New Chat</button>
+</form></div>
         <div style='background:#1A1A1A;border:1px solid {PBD2};border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>
             <div><div style='font-size:11px;color:{SC2};'>Aaj ke messages</div><div style='font-size:16px;font-weight:700;color:#A5B4FC;'>{st.session_state.msg_count}/1500</div></div>
             <div style='font-size:24px;'>💬</div>
         </div>
-        <div onclick="location.href=location.pathname+'?action=toggle_mode'" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid {PBD2};color:{TC2};cursor:pointer;font-size:13px;margin-bottom:8px;'>{mode_lbl2}</div>
-        <div onclick="location.href=location.pathname+'?action=clear_chat'" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid {PBD2};color:{TC2};cursor:pointer;font-size:13px;margin-bottom:8px;'>🗑️ Clear Chat</div>
-        <div onclick="location.href=location.pathname+'?action=delete_chat'" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #3A1A1A;color:#EF4444;cursor:pointer;font-size:13px;margin-bottom:8px;'>🔴 Delete Chat</div>
+        <div onclick="document.getElementById('f_mode').submit()" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid {PBD2};color:{TC2};cursor:pointer;font-size:13px;margin-bottom:8px;'>{mode_lbl2}</div>
+        <div onclick="document.getElementById('f_clear').submit()" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid {PBD2};color:{TC2};cursor:pointer;font-size:13px;margin-bottom:8px;'>🗑️ Clear Chat</div>
+        <div onclick="document.getElementById('f_delete').submit()" style='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #3A1A1A;color:#EF4444;cursor:pointer;font-size:13px;margin-bottom:8px;'>🔴 Delete Chat</div>
     </div>
 
     <div style='padding:0 14px;'>
@@ -355,6 +359,9 @@ st.markdown(f"""
         <div id='clist'>{chat_list_html}</div>
     </div>
 
+    <form id='f_mode' method='get'><input type='hidden' name='action' value='toggle_mode'></form>
+    <form id='f_clear' method='get'><input type='hidden' name='action' value='clear_chat'></form>
+    <form id='f_delete' method='get'><input type='hidden' name='action' value='delete_chat'></form>
     <div style='background:#1A1A1A;border:1px solid {PBD2};border-radius:12px;padding:14px;text-align:center;margin:12px 14px;'>
         <div style='font-size:22px;margin-bottom:6px;'>🤖</div>
         <div style='font-size:13px;font-weight:700;color:#A5B4FC;'>Bharat AI</div>
